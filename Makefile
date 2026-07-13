@@ -36,7 +36,7 @@ build-clean:
 	rm --force --recursive *.egg-info
 
 build: build-clean
-	python ./setup.py sdist bdist_wheel
+	uv build
 	python -m twine check dist/*
 
 publish: build

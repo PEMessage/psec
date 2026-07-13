@@ -1,9 +1,69 @@
 [build-system]
 requires = [
-    "setuptools >= 40.6.2",
+    "setuptools >= 61.0",
     "wheel >= 0.30.0",
 ]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "psec"
+version = "1.3.0"
+description = "A Python package for cryptography in payment systems"
+readme = "README.rst"
+license = { text = "MIT" }
+requires-python = ">=3.8"
+keywords = ["payment", "security", "cvv", "cvd", "cvc", "mac", "iso9797", "tdes", "aes", "tr31"]
+authors = [
+    { name = "Konstantin Novichikhin", email = "konstantin.novichikhin@gmail.com" },
+]
+dependencies = [
+    "cryptography >= 1.0",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Topic :: Security :: Cryptography",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Homepage = "https://github.com/knovichikhin/psec"
+
+[dependency-groups]
+dev = [
+    "black == 24.3.0",
+    "flake8",
+    "pytest >= 6.0",
+    "pytest-cov",
+    "coverage",
+    "toml",
+    "codecov",
+    "twine",
+    "wheel",
+    "setuptools",
+    "mypy",
+    "types-cryptography",
+]
+
+[tool.setuptools]
+zip-safe = false
+
+[tool.setuptools.packages.find]
+exclude = ["tests"]
+
+[tool.setuptools.package-data]
+psec = ["py.typed"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"

@@ -8,5 +8,5 @@ codecov
 twine
 wheel
 setuptools
-mypy
+mypy == 1.14.1
 types-cryptography # Needed by mypy

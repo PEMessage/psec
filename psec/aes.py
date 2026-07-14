@@ -6,8 +6,10 @@ from cryptography.hazmat.primitives.ciphers import modes as _modes
 __all__ = [
     "encrypt_aes_cbc",
     "encrypt_aes_ecb",
+    "encrypt_aes_ctr",
     "decrypt_aes_cbc",
     "decrypt_aes_ecb",
+    "decrypt_aes_ctr",
 ]
 
 
@@ -177,4 +179,76 @@ def decrypt_aes_ecb(key: bytes, data: bytes) -> bytes:
         )
 
     cipher = _Cipher(_algorithms.AES(key), _modes.ECB(), backend=_default_backend())
+    return cipher.decryptor().update(data)
+
+
+def encrypt_aes_ctr(key: bytes, nonce: bytes, data: bytes) -> bytes:
+    r"""Encrypt data using AES CTR algorithm.
+
+    Parameters
+    ----------
+    key : bytes
+        Binary AES key.
+    nonce : bytes
+        Binary initial counter block for CTR.
+        Has to be 16 bytes long.
+    data : bytes
+        Binary data to be encrypted.
+        CTR is a stream cipher, so data may be of any length.
+
+    Returns
+    -------
+    encrypted_data : bytes
+        Binary encrypted data.
+
+    Examples
+    --------
+    >>> import psec
+    >>> key = bytes.fromhex("0123456789ABCDEFFEDCBA9876543210")
+    >>> nonce = bytes.fromhex("00000000000000000000000000000000")
+    >>> data = bytes.fromhex("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF") * 2
+    >>> psec.aes.encrypt_aes_ctr(key, nonce, data).hex().upper()
+    '2A37DA5DE0FB9BC4BC1D20CD87589D0822E0982DF4563838388BC2B565C8EF27'
+    """
+    cipher = _Cipher(
+        _algorithms.AES(key),
+        _modes.CTR(nonce),
+        backend=_default_backend(),
+    )
+    return cipher.encryptor().update(data)
+
+
+def decrypt_aes_ctr(key: bytes, nonce: bytes, data: bytes) -> bytes:
+    r"""Decrypt data using AES CTR algorithm.
+
+    Parameters
+    ----------
+    key : bytes
+        Binary AES key.
+    nonce : bytes
+        Binary initial counter block for CTR.
+        Has to be 16 bytes long.
+    data : bytes
+        Binary data to be decrypted.
+        CTR is a stream cipher, so data may be of any length.
+
+    Returns
+    -------
+    decrypted_data : bytes
+        Binary decrypted data.
+
+    Examples
+    --------
+    >>> import psec
+    >>> key = bytes.fromhex("0123456789ABCDEFFEDCBA9876543210")
+    >>> nonce = bytes.fromhex("00000000000000000000000000000000")
+    >>> cipher_text = bytes.fromhex("2A37DA5DE0FB9BC4BC1D20CD87589D0822E0982DF4563838388BC2B565C8EF27")
+    >>> psec.aes.decrypt_aes_ctr(key, nonce, cipher_text).hex().upper()
+    'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF'
+    """
+    cipher = _Cipher(
+        _algorithms.AES(key),
+        _modes.CTR(nonce),
+        backend=_default_backend(),
+    )
     return cipher.decryptor().update(data)

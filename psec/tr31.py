@@ -94,9 +94,12 @@ Header Properties - Version ID
 +-------+-------------------------------------------------------------------+-----------+
 | 'D'   | Key block protected using the AES Key Derivation Binding Method.  | AES       |
 +-------+-------------------------------------------------------------------+-----------+
+| 'E'   | Key block protected using the AES Key Derivation Binding Method,  | AES       |
+|       | using AES CTR for encryption. Defined in ISO 20038.               |           |
++-------+-------------------------------------------------------------------+-----------+
 
 Numeric version IDs are reserved for proprietary key block definitions.
-This library supports only version IDs A, B, C and D.
+This library supports only version IDs A, B, C, D and E.
 
 Header Properties - Key Usage
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -615,7 +618,7 @@ class Blocks(_typing.MutableMapping[str, str]):
 
 
 class Header:
-    """TR-31 header. Supports versions A, B, C and D.
+    """TR-31 header. Supports versions A, B, C, D and E.
 
     Parameters
     ----------
@@ -679,11 +682,11 @@ class Header:
         information about the key block.
     """
 
-    _version_id_key_block_mac_len = {"A": 4, "B": 8, "C": 4, "D": 16}
+    _version_id_key_block_mac_len = {"A": 4, "B": 8, "C": 4, "D": 16, "E": 16}
 
     # DES = 8 bytes block
     # AES = 16 bytes block
-    _version_id_algo_block_size = {"A": 8, "B": 8, "C": 8, "D": 16}
+    _version_id_algo_block_size = {"A": 8, "B": 8, "C": 8, "D": 16, "E": 16}
 
     def __init__(
         self,
@@ -730,7 +733,7 @@ class Header:
 
     @version_id.setter
     def version_id(self, version_id: str) -> None:
-        if version_id not in {"A", "B", "C", "D"}:
+        if version_id not in {"A", "B", "C", "D", "E"}:
             raise HeaderError(f"Version ID ({version_id}) is not supported.")
         self._version_id = version_id
 
@@ -826,7 +829,12 @@ class Header:
         """
 
         algo_block_size = self._version_id_algo_block_size[self.version_id]
-        pad_len = algo_block_size - ((2 + key_len) % algo_block_size)
+        # Version E uses AES CTR (stream cipher), so the key payload
+        # is not padded to the block size.
+        if self.version_id == "E":
+            pad_len = 0
+        else:
+            pad_len = algo_block_size - ((2 + key_len) % algo_block_size)
 
         blocks_num, blocks = self.blocks.dump(algo_block_size)
 
@@ -913,7 +921,7 @@ class Header:
 
 
 class KeyBlock:
-    """TR-31 key block. Supports versions A, B, C and D.
+    """TR-31 key block. Supports versions A, B, C, D and E.
 
     Parameters
     ----------
@@ -921,7 +929,7 @@ class KeyBlock:
         Key Block Protection Key.
         Must be a Single, Double or Triple DES key for versions A and C.
         Must be a Double or Triple DES key for versions B.
-        Must be an AES key for version D.
+        Must be an AES key for versions D and E.
     header : Header or str
         TR-31 key block header either in TR-31 string format or
         as a Header class. Optional.
@@ -934,7 +942,7 @@ class KeyBlock:
         Key Block Protection Key.
         Must be a Single, Double or Triple DES key for versions A and C.
         Must be a Double or Triple DES key for versions B.
-        Must be an AES key for version D.
+        Must be an AES key for versions D and E.
     header : Header
         TR-31 key block header.
 
@@ -945,11 +953,11 @@ class KeyBlock:
     with AES-128 KBPK.
     """
 
-    _version_id_key_block_mac_len = {"A": 4, "B": 8, "C": 4, "D": 16}
+    _version_id_key_block_mac_len = {"A": 4, "B": 8, "C": 4, "D": 16, "E": 16}
 
     # DES = 8 bytes block
     # AES = 16 bytes block
-    _version_id_algo_block_size = {"A": 8, "B": 8, "C": 8, "D": 16}
+    _version_id_algo_block_size = {"A": 8, "B": 8, "C": 8, "D": 16, "E": 16}
 
     # DES = 24 bytes (Triple DES)
     # AES = 32 byets (AES-256)
@@ -972,7 +980,7 @@ class KeyBlock:
         return str(self.header)
 
     def wrap(self, key: bytes, masked_key_len: _typing.Optional[int] = None) -> str:
-        r"""Wrap key into a TR-31 key block version A, B, C or D.
+        r"""Wrap key into a TR-31 key block version A, B, C, D or E.
 
         Parameters
         ----------
@@ -1044,7 +1052,7 @@ class KeyBlock:
         )
 
     def unwrap(self, key_block: str) -> bytes:
-        r"""Unwrap key from a TR-31 key block version A, B, C or D.
+        r"""Unwrap key from a TR-31 key block version A, B, C, D or E.
 
         Parameters
         ----------
@@ -1105,8 +1113,12 @@ class KeyBlock:
                 f"doesn't match input data length ({str(len(key_block))})."
             )
 
+        # Version E uses AES CTR (stream cipher) and therefore the key
+        # block length is not required to be a multiple of the block size.
         if (
-            len(key_block) % self._version_id_algo_block_size[self.header.version_id]
+            self.header.version_id != "E"
+            and len(key_block)
+            % self._version_id_algo_block_size[self.header.version_id]
             != 0
         ):
             raise KeyBlockError(
@@ -1527,6 +1539,153 @@ class KeyBlock:
         mac = _mac.generate_cbc_mac(kbak, mac_data, 1, 16, _mac.Algorithm.AES)
         return mac
 
+    # Version E
+
+    def _e_wrap(self, header: str, key: bytes, extra_pad: int) -> str:
+        """Wrap key into TR-31 key block version E"""
+
+        if len(self.kbpk) not in {16, 24, 32}:
+            raise KeyBlockError(
+                f"KBPK length ({str(len(self.kbpk))}) must be AES-128, AES-192 or AES-256 "
+                f"for key block version {self.header.version_id}."
+            )
+
+        # Derive Key Block Encryption and Authentication Keys
+        kbek, kbak = self._e_derive()
+
+        # Format key data: 2 byte key length measured in bits + key + pad.
+        # Version E uses AES CTR (stream cipher) so no block padding is
+        # required. Any extra pad is only used to mask the key length.
+        pad = _urandom(extra_pad)
+        clear_key_data = (len(key) * 8).to_bytes(2, "big") + key + pad
+
+        # Generate MAC
+        mac = self._e_generate_mac(kbak, header, clear_key_data)
+
+        # Encrypt key data; the MAC is used as the CTR nonce/IV
+        enc_key = _aes.encrypt_aes_ctr(kbek, mac, clear_key_data)
+
+        return header + enc_key.hex().upper() + mac.hex().upper()
+
+    def _e_unwrap(self, header: str, key_data: bytes, received_mac: bytes) -> bytes:
+        """Unwrap key from TR-31 key block version E"""
+
+        if len(self.kbpk) not in {16, 24, 32}:
+            raise KeyBlockError(
+                f"KBPK length ({str(len(self.kbpk))}) must be AES-128, AES-192 or AES-256 "
+                f"for key block version {self.header.version_id}."
+            )
+
+        if len(key_data) < 2:
+            raise KeyBlockError(
+                f"Encrypted key is malformed. Key data: '{key_data.hex().upper()}'"
+            )
+
+        # Derive Key Block Encryption and Authentication Keys
+        kbek, kbak = self._e_derive()
+
+        # Decrypt key data; the MAC is used as the CTR nonce/IV
+        clear_key_data = _aes.decrypt_aes_ctr(kbek, received_mac, key_data)
+
+        # Validate MAC
+        mac = self._e_generate_mac(kbak, header, clear_key_data)
+        if mac != received_mac:
+            raise KeyBlockError("Key block MAC doesn't match generated MAC.")
+
+        # Extract key from key data: 2 byte key length measured in bits + key + pad
+        key_length = int.from_bytes(clear_key_data[0:2], "big")
+
+        # This library does not support keys not measured in whole bytes
+        if key_length % 8 != 0:
+            raise KeyBlockError("Decrypted key is invalid.")
+
+        key_length = key_length // 8
+        key = clear_key_data[2 : key_length + 2]
+        if len(key) != key_length:
+            raise KeyBlockError("Decrypted key is malformed.")
+
+        return key
+
+    def _e_derive(self) -> _typing.Tuple[bytes, bytes]:
+        """Derive Key Block Encryption and Authentication Keys"""
+        # Key Derivation data
+        # byte 0 = a counter increment for each block of kbpk, start at 1
+        # byte 1-2 = key usage indicator
+        #   - 0002 = encryption (AES CTR)
+        #   - 0001 = MAC
+        # byte 3 = separator, set to 0
+        # byte 4-5 = algorithm indicator
+        #   - 0002 = AES-128
+        #   - 0003 = AES-192
+        #   - 0004 = AES-256
+        # byte 6-7 = key length in bits
+        #   - 0080 = AES-128
+        #   - 00C0 = AES-192
+        #   - 0100 = AES-256
+        kd_input = bytearray(
+            b"\x01\x00\x00\x00\x00\x02\x00\x80\x80\x00\x00\x00\x00\x00\x00\x00"
+        )
+
+        if len(self.kbpk) == 16:
+            # Adjust for AES 128 bit
+            kd_input[4:6] = b"\x00\x02"
+            kd_input[6:8] = b"\x00\x80"
+            calls_to_cmac = [1]
+        elif len(self.kbpk) == 24:
+            # Adjust for AES 192 bit
+            kd_input[4:6] = b"\x00\x03"
+            kd_input[6:8] = b"\x00\xC0"
+            calls_to_cmac = [1, 2]
+        else:
+            # Adjust for AES 256 bit
+            kd_input[4:6] = b"\x00\x04"
+            kd_input[6:8] = b"\x01\x00"
+            calls_to_cmac = [1, 2]
+
+        kbek = bytearray()  # encryption key
+        kbak = bytearray()  # authentication key
+
+        _, k2 = self._derive_aes_cmac_subkey(self.kbpk)
+
+        # Produce the same number of keying material as the key's length.
+        # Each call to CMAC produces 128 bits of keying material.
+        # AES-128 -> 1 call to CMAC  -> AES-128 KBEK/KBAK
+        # AES-196 -> 2 calls to CMAC -> AES-196 KBEK/KBAK (out of 256 bits of data)
+        # AES-256 -> 2 calls to CMAC -> AES-256 KBEK/KBAK
+        for i in calls_to_cmac:
+            # Counter is incremented for each call to CMAC
+            kd_input[0] = i
+
+            # Encryption key. Version E uses AES CTR, indicated by 0002.
+            kd_input[1:3] = b"\x00\x02"
+            kbek += _mac.generate_cbc_mac(
+                self.kbpk, _tools.xor(kd_input, k2), 1, 16, _mac.Algorithm.AES
+            )
+
+            # Authentication key
+            kd_input[1:3] = b"\x00\x01"
+            kbak += _mac.generate_cbc_mac(
+                self.kbpk, _tools.xor(kd_input, k2), 1, 16, _mac.Algorithm.AES
+            )
+
+        return bytes(kbek[: len(self.kbpk)]), bytes(kbak[: len(self.kbpk)])
+
+    def _e_generate_mac(self, kbak: bytes, header: str, key_data: bytes) -> bytes:
+        """Generate MAC using KBAK"""
+        km1, km2 = self._derive_aes_cmac_subkey(kbak)
+        mac_data = header.encode("ascii") + key_data
+        # Version E does not pad the key data, so the MAC input may not be a
+        # multiple of the AES block size. Apply the AES CMAC final block
+        # transform: use subkey 1 for a complete final block, otherwise pad
+        # with 0x80 (ISO/IEC 9797-1 method 2) and use subkey 2.
+        if len(mac_data) != 0 and len(mac_data) % 16 == 0:
+            mac_data = mac_data[:-16] + _tools.xor(mac_data[-16:], km1)
+        else:
+            mac_data = _mac.pad_iso_2(mac_data, 16)
+            mac_data = mac_data[:-16] + _tools.xor(mac_data[-16:], km2)
+        mac = _mac.generate_cbc_mac(kbak, mac_data, 1, 16, _mac.Algorithm.AES)
+        return mac
+
     def _derive_aes_cmac_subkey(self, key: bytes) -> _typing.Tuple[bytes, bytes]:
         """Derive two subkeys from an AES key. Each subkey is 16 bytes."""
 
@@ -1560,6 +1719,7 @@ class KeyBlock:
         "B": _b_wrap,
         "C": _c_wrap,
         "D": _d_wrap,
+        "E": _e_wrap,
     }
 
     _unwrap_dispatch: _typing.Dict[
@@ -1569,6 +1729,7 @@ class KeyBlock:
         "B": _b_unwrap,
         "C": _c_unwrap,
         "D": _d_unwrap,
+        "E": _e_unwrap,
     }
 
 
@@ -1578,7 +1739,7 @@ def wrap(
     key: bytes,
     masked_key_len: _typing.Optional[int] = None,
 ) -> str:
-    r"""Wrap key into a TR-31 key block version A, B, C or D.
+    r"""Wrap key into a TR-31 key block version A, B, C, D or E.
 
     Parameters
     ----------
@@ -1586,7 +1747,7 @@ def wrap(
         Key Block Protection Key.
         Must be a Single, Double or Triple DES key for versions A and C.
         Must be a Double or Triple DES key for versions B.
-        Must be an AES key for version D.
+        Must be an AES key for versions D and E.
     header : Header or str
         TR-31 key block header either in TR-31 string format or
         as a Header class.
@@ -1631,7 +1792,7 @@ def wrap(
 
 
 def unwrap(kbpk: bytes, key_block: str) -> _typing.Tuple[Header, bytes]:
-    r"""Unwrap key from a TR-31 key block version A, B, C or D.
+    r"""Unwrap key from a TR-31 key block version A, B, C, D or E.
 
     Parameters
     ----------
@@ -1639,7 +1800,7 @@ def unwrap(kbpk: bytes, key_block: str) -> _typing.Tuple[Header, bytes]:
         Key Block Protection Key.
         Must be a Single, Double or Triple DES key for versions A and C.
         Must be a Double or Triple DES key for versions B.
-        Must be an AES key for version D.
+        Must be an AES key for versions D and E.
     key_block : str
         A TR-31 key block.
 
